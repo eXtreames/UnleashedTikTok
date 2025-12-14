@@ -2,6 +2,7 @@ package ru.extreames.unleashedtiktok.xposed;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
+import ru.extreames.unleashedtiktok.xposed.features.BlockCloud;
 import ru.extreames.unleashedtiktok.xposed.features.DownloadVideo;
 import ru.extreames.unleashedtiktok.xposed.features.RegionBypass;
 import ru.extreames.unleashedtiktok.xposed.utils.Utils;
@@ -15,6 +16,7 @@ public class XposedInit implements IXposedHookLoadPackage {
         try {
             DownloadVideo.initialize(lpParam);
             RegionBypass.initialize(lpParam);
+            BlockCloud.initialize(lpParam);
             Utils.log(Utils.DEBUG_LEVEL.INFO, "Successfully initialized");
         }
         catch (Exception e) {
