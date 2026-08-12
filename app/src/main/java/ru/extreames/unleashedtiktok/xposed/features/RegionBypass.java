@@ -15,12 +15,17 @@ public class RegionBypass {
         retConst(TelephonyManager.class, "getSimOperatorName", REGION_OPERATOR_NAME);
         retConst(TelephonyManager.class, "getSimCountryIso", REGION_COUNTRY_ISO);
         retConst(TelephonyManager.class, "getSimOperator", REGION_OPERATOR_NUM);
+
         retConst(TelephonyManager.class, "getNetworkOperatorName", REGION_OPERATOR_NAME);
         retConst(TelephonyManager.class, "getNetworkCountryIso", REGION_COUNTRY_ISO);
         retConst(TelephonyManager.class, "getNetworkOperator", REGION_OPERATOR_NUM);
+
+        retConst(TelephonyManager.class, "getDataNetworkType", TelephonyManager.NETWORK_TYPE_LTE);
+        retConst(TelephonyManager.class, "getNetworkType", TelephonyManager.NETWORK_TYPE_LTE);
+        retConst(TelephonyManager.class, "getSimState", TelephonyManager.SIM_STATE_READY);
     }
 
-    private static void retConst(Class<?> clazz, String method, String constant) {
+    private static void retConst(Class<?> clazz, String method, Object constant) {
         XposedHelpers.findAndHookMethod(
                 clazz,
                 method,
