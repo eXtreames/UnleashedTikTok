@@ -7,6 +7,7 @@ import android.net.Uri;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Message;
 import android.provider.MediaStore;
 import android.widget.Toast;
 
@@ -19,7 +20,6 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
-import java.util.Objects;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -30,8 +30,19 @@ import ru.extreames.unleashedtiktok.xposed.utils.Utils;
 public class DownloadVideo {
     private static String SAVED_VIDEO_URL = null;
     private static String SAVED_VIDEO_AUTHOR = null;
+
     public static void initialize(final XC_LoadPackage.LoadPackageParam lpParam) {
         Class<?> Aweme = XposedHelpers.findClass("com.ss.android.ugc.aweme.feed.model.Aweme", lpParam.classLoader);
+        Class<?> ACLCommonShare = XposedHelpers.findClass("com.ss.android.ugc.aweme.feed.model.ACLCommonShare", lpParam.classLoader);
+        Class<?> WeakDownloadHandler = XposedHelpers.findClass("com.ss.android.socialbase.downloader.thread.WeakDownloadHandler", lpParam.classLoader);
+
+        Utils.retConst(Aweme, "isPreventDownload", false);
+        Utils.retConst(Aweme, "needTTSWatermarkWhenDownload", false);
+
+        Utils.retConst(ACLCommonShare, "getCode", 0);
+        Utils.retConst(ACLCommonShare, "getShowType", 2);
+        Utils.retConst(ACLCommonShare, "getTranscode", 1);
+
         XposedHelpers.findAndHookMethod(Aweme,
                 "getAwemeACLShareInfo",
                 new XC_MethodHook() {
@@ -73,106 +84,41 @@ public class DownloadVideo {
                         }
                     }
                 });
-        XposedHelpers.findAndHookMethod(Aweme,
-                "isPreventDownload",
-                new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
-                        param.setResult(false);
-                    }
-                });
-        XposedHelpers.findAndHookMethod(Aweme,
-                "needTTSWatermarkWhenDownload",
-                new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
-                        param.setResult(false);
-                    }
-                });
 
-
+        // TODO: Fix lagging message "Downloading... 0%"
         XposedBridge.hookAllMethods(
-                ContentResolver.class,
-                "insert",
+                WeakDownloadHandler,
+                "handleMessage",
                 new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) {
-                        Uri uri = (Uri) param.args[0];
-                        ContentValues values = (ContentValues) param.args[1];
+                        Message msg = (Message) param.args[0];
+                        // Utils.log(Utils.DEBUG_LEVEL.INFO, msg.toString());
 
-                        if (!Objects.equals(uri.getAuthority(), MediaStore.AUTHORITY)) // non-media
-                            return;
+                        if (msg.what == 1) { // STATUS_PREPARE
+                            downloadVideo();
 
-                        String fileName = values.getAsString(MediaStore.Video.Media.DISPLAY_NAME);
-                        if (fileName == null || !fileName.endsWith(".mp4")) // non-video
-                            return;
-                        if (fileName.endsWith(".utt.mp4")) // own saving routine
-                            return;
+                            Message successMsg = Message.obtain(msg);
+                            successMsg.what = -3; // STATUS_SUCCESS
+                            successMsg.arg1 = msg.arg1;
+                            successMsg.arg2 = msg.arg2;
+                            XposedHelpers.callMethod(param.thisObject, "handleMessage", successMsg);
 
-                        if (SAVED_VIDEO_URL != null) {
-                            downloadVideo(SAVED_VIDEO_URL, generateFileName(SAVED_VIDEO_AUTHOR)); // own downloading routine
-                            SAVED_VIDEO_URL = null; SAVED_VIDEO_AUTHOR = null;
+                            param.setResult(null);
                         }
-
-                        param.setResult(null); // we have own routine to save video's
                     }
                 });
-        XposedHelpers.findAndHookConstructor(
-                File.class,
-                String.class,
-                new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
-                        String path = (String) param.args[0];
-                        if (path == null || !path.endsWith("/null.mp4")) // invalid or non-prevent-download video
-                            return;
-
-                        if (SAVED_VIDEO_URL != null) {
-                            downloadVideo(SAVED_VIDEO_URL, generateFileName(SAVED_VIDEO_AUTHOR)); // own downloading routine
-                            SAVED_VIDEO_URL = null; SAVED_VIDEO_AUTHOR = null;
-                        }
-
-                        (new File((String) null, path)).delete(); // we have own routine to save video's
-                        param.args[0] = "";                       // we have own routine to save video's
-                    }
-                }
-        );
-
-        Class<?> ACLCommonShare = XposedHelpers.findClass("com.ss.android.ugc.aweme.feed.model.ACLCommonShare", lpParam.classLoader);
-        XposedBridge.hookAllMethods(
-                ACLCommonShare,
-                "getCode",
-                new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
-                        param.setResult(0);
-                    }
-                }
-        );
-        XposedBridge.hookAllMethods(
-                ACLCommonShare,
-                "getShowType",
-                new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
-                        param.setResult(2);
-                    }
-                }
-        );
-        XposedBridge.hookAllMethods(
-                ACLCommonShare,
-                "getTranscode",
-                new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
-                        param.setResult(1);
-                    }
-                }
-        );
     }
 
-    private static void downloadVideo(String urlStr, String fileName) {
+    private static void downloadVideo() {
+        if (SAVED_VIDEO_URL == null) {
+            return;
+        }
+
+        final String generatedFileName = generateFileName(SAVED_VIDEO_AUTHOR);
+        final String savedUrl = SAVED_VIDEO_URL;
         final Context context = getApplicationContext();
+
         if (context == null) {
             Utils.log(Utils.DEBUG_LEVEL.ERROR, "Context == null");
             return;
@@ -183,7 +129,7 @@ public class DownloadVideo {
             ContentValues values = new ContentValues();
             long currentTime = System.currentTimeMillis();
 
-            values.put(MediaStore.Video.Media.DISPLAY_NAME, fileName);
+            values.put(MediaStore.Video.Media.DISPLAY_NAME, generatedFileName);
             values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
             values.put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + File.separator + "TikTok");
 
@@ -198,7 +144,7 @@ public class DownloadVideo {
             }
 
             try {
-                URL url = new URL(urlStr);
+                URL url = new URL(savedUrl);
 
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36");
@@ -224,6 +170,9 @@ public class DownloadVideo {
                 Utils.log(Utils.DEBUG_LEVEL.ERROR, "Error while downloading video - " + e);
             }
         }).start();
+
+        SAVED_VIDEO_URL = null;
+        SAVED_VIDEO_AUTHOR = null;
     }
 
     private static Context getApplicationContext() {
@@ -249,6 +198,6 @@ public class DownloadVideo {
         SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd-HH-mm-ss", Locale.US);
         String formattedDate = dateFormat.format(new Date(currentTimeMillis));
 
-        return String.format(Locale.US, "%s_%s_%d.utt.mp4", prefix, formattedDate, currentTimeMillis);
+        return String.format(Locale.US, "%s_%s_%d.mp4", prefix, formattedDate, currentTimeMillis);
     }
 }
